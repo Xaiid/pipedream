@@ -88,6 +88,30 @@ export default {
       label: "Message ID",
       description: "The ID that uniquely identifies the message sent via WhatsApp.",
     },
+    mediaUrl: {
+      type: "string",
+      label: "Media URL",
+      description: "URL of the media file to be sent in the MMS. Must be publicly accessible.",
+    },
+    contentType: {
+      type: "string",
+      label: "Content Type",
+      description: "MIME type of the media file (e.g., image/jpeg, image/png, video/mp4).",
+      options: [
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "video/mp4",
+        "video/3gpp",
+        "audio/mpeg",
+        "audio/wav",
+      ],
+    },
+    subject: {
+      type: "string",
+      label: "Subject",
+      description: "Subject line for the MMS message.",
+    },
   },
   methods: {
     _baseUrl() {
@@ -146,6 +170,13 @@ export default {
       return this._makeRequest({
         method: "POST",
         path: "/whatsapp/1/message/text",
+        ...opts,
+      });
+    },
+    sendMms(opts = {}) {
+      return this._makeRequest({
+        method: "POST",
+        path: "/mms/1/text",
         ...opts,
       });
     },
