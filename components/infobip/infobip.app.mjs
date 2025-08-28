@@ -180,6 +180,64 @@ export default {
         ...opts,
       });
     },
+    sendWhatsappImageMessage(opts = {}) {
+      return this._makeRequest({
+        method: "POST",
+        path: "/whatsapp/1/message/image",
+        ...opts,
+      });
+    },
+    sendWhatsappDocumentMessage(opts = {}) {
+      return this._makeRequest({
+        method: "POST",
+        path: "/whatsapp/1/message/document",
+        ...opts,
+      });
+    },
+    sendWhatsappVideoMessage(opts = {}) {
+      return this._makeRequest({
+        method: "POST",
+        path: "/whatsapp/1/message/video",
+        ...opts,
+      });
+    },
+    sendWhatsappAudioMessage(opts = {}) {
+      return this._makeRequest({
+        method: "POST",
+        path: "/whatsapp/1/message/audio",
+        ...opts,
+      });
+    },
+    sendWhatsappTemplateMessage(opts = {}) {
+      return this._makeRequest({
+        method: "POST",
+        path: "/whatsapp/1/message/template",
+        ...opts,
+      });
+    },
+    sendWhatsappInteractiveButtonsMessage(opts = {}) {
+      return this._makeRequest({
+        method: "POST",
+        path: "/whatsapp/1/message/interactive/buttons",
+        ...opts,
+      });
+    },
+    sendWhatsappLocationMessage(opts = {}) {
+      return this._makeRequest({
+        method: "POST",
+        path: "/whatsapp/1/message/location",
+        ...opts,
+      });
+    },
+    markWhatsappMessageAsRead({
+      sender, messageId, ...opts
+    }) {
+      return this._makeRequest({
+        method: "POST",
+        path: `/whatsapp/1/senders/${sender}/message/${messageId}/read`,
+        ...opts,
+      });
+    },
     createHook(opts = {}) {
       return this._makeRequest({
         method: "POST",
