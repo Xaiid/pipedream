@@ -159,6 +159,79 @@ export default {
         ...opts,
       });
     },
+    sendSmsV3(opts = {}) {
+      return this._makeRequest({
+        method: "POST",
+        path: "/sms/3/messages",
+        ...opts,
+      });
+    },
+    getSmsDeliveryReports(opts = {}) {
+      return this._makeRequest({
+        path: "/sms/3/reports",
+        ...opts,
+      });
+    },
+    getSmsLogs(opts = {}) {
+      return this._makeRequest({
+        path: "/sms/3/logs",
+        ...opts,
+      });
+    },
+    getScheduledSmsMessages(opts = {}) {
+      return this._makeRequest({
+        path: "/sms/1/bulks",
+        ...opts,
+      });
+    },
+    getScheduledSmsStatus(opts = {}) {
+      return this._makeRequest({
+        path: "/sms/1/bulks/status",
+        ...opts,
+      });
+    },
+    updateScheduledSmsStatus(opts = {}) {
+      return this._makeRequest({
+        method: "PUT",
+        path: "/sms/1/bulks/status",
+        ...opts,
+      });
+    },
+    rescheduleScheduledSms(opts = {}) {
+      return this._makeRequest({
+        method: "PUT",
+        path: "/sms/1/bulks",
+        ...opts,
+      });
+    },
+    previewSms(opts = {}) {
+      return this._makeRequest({
+        method: "POST",
+        path: "/sms/1/preview",
+        ...opts,
+      });
+    },
+    getInboundSmsMessages(opts = {}) {
+      return this._makeRequest({
+        path: "/sms/1/inbox/reports",
+        ...opts,
+      });
+    },
+    confirmSmsConversion({
+      messageId, ...opts
+    }) {
+      return this._makeRequest({
+        method: "POST",
+        path: `/ct/1/log/end/${messageId}`,
+        ...opts,
+      });
+    },
+    sendSmsQuery(opts = {}) {
+      return this._makeRequest({
+        path: "/sms/3/text/query",
+        ...opts,
+      });
+    },
     sendViberMessage(opts = {}) {
       return this._makeRequest({
         method: "POST",
