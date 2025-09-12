@@ -1,217 +1,85 @@
-import { axios } from "@pipedream/platform";
-import { LIMIT } from "./common/constants.mjs";
-import InfobipOpenAPIGenerator from "./lib/openapi-generator.mjs";
-
 export default {
   type: "app",
   app: "infobip",
   propDefinitions: {
-    applicationId: {
+    // OpenAPI Generated Props - START
+    bulkId: {
       type: "string",
-      label: "Application ID",
-      description: "Required for application use in a send request for outbound traffic. Returned in notification events. For more details, [see the Infobip documentation](https://www.infobip.com/docs/cpaas-x/application-and-entity-management).",
-      async options({ page }) {
-        const { results } = await this.listApplications({
-          params: {
-            page: page,
-            size: LIMIT,
-          },
-        });
-
-        return results.map(({
-          applicationId: value, applicationName: label,
-        }) => ({
-          label,
-          value,
-        }));
-      },
+      label: "Bulk ID",
+      description: "The ID which uniquely identifies the request for which the delivery reports are returned.",
     },
-    entityId: {
-      type: "string",
-      label: "Entity Id",
-      description: "Required for entity use in a send request for outbound traffic. Returned in notification events. For more details, [see the Infobip documentation](https://www.infobip.com/docs/cpaas-x/application-and-entity-management).",
-      async options({ page }) {
-        const { results } = await this.listEntities({
-          params: {
-            page: page,
-            size: LIMIT,
-          },
-        });
-
-        return results.map(({
-          entityId: value, entityName: label,
-        }) => ({
-          label,
-          value,
-        }));
-      },
+    limit: {
+      type: "integer",
+      label: "Limit",
+      description: "Maximum number of messages to retrieve. Default is 50.",
+      optional: true,
     },
-    resourceKey: {
+    sendAt: {
       type: "string",
-      label: "Resource Key",
-      description: "Required if `Resource` not present.",
-      async options({
-        page, channel,
-      }) {
-        const { results } = await this.listResources({
-          params: {
-            page: page,
-            size: LIMIT,
-            channel,
-          },
-        });
-
-        return results.map(({ resourceId }) => resourceId);
-      },
+      label: "Send At",
+      description: "Date and time when the message is to be sent. Used for scheduling messages.",
+      optional: true,
     },
-    phoneNumber: {
-      type: "string",
-      label: "Phone Number",
-      description: "Message destination address. Addresses must be in international format (Example: 41793026727).",
+    validityPeriod: {
+      type: "integer",
+      label: "Validity Period",
+      description: "The message validity period in minutes. How long the delivery will be attempted.",
+      optional: true,
     },
-    text: {
-      type: "string",
-      label: "Text",
-      description: "Content of the message being sent.",
+    deliveryTimeWindow: {
+      type: "object",
+      label: "Delivery Time Window",
+      description: "Sets specific delivery window for sending messages.",
+      optional: true,
     },
-    from: {
-      type: "string",
-      label: "From",
-      description: "The sender ID which can be alphanumeric or numeric (e.g., CompanyName). Make sure you don't exceed [character limit](https://www.infobip.com/docs/sms/get-started#sender-names).",
+    flash: {
+      type: "boolean",
+      label: "Flash Message",
+      description: "Allows you to send a flash SMS to the destination number.",
+      optional: true,
     },
-    to: {
+    transliteration: {
       type: "string",
-      label: "To",
-      description: "The destination address of the message.",
-    },
-    messageId: {
-      type: "string",
-      label: "Message ID",
-      description: "The ID that uniquely identifies the message sent via WhatsApp.",
-    },
-    mediaUrl: {
-      type: "string",
-      label: "Media URL",
-      description: "URL of the media file to be sent in the MMS. Must be publicly accessible.",
-    },
-    contentType: {
-      type: "string",
-      label: "Content Type",
-      description: "MIME type of the media file (e.g., image/jpeg, image/png, video/mp4).",
+      label: "Transliteration",
+      description: "Conversion of a message text from one script to another.",
+      optional: true,
       options: [
-        "image/jpeg",
-        "image/png",
-        "image/gif",
-        "video/mp4",
-        "video/3gpp",
-        "audio/mpeg",
-        "audio/wav",
+        "TURKISH",
+        "GREEK",
+        "CYRILLIC",
+        "SERBIAN_CYRILLIC",
+        "CENTRAL_EUROPEAN",
+        "BALTIC",
       ],
     },
-    subject: {
-      type: "string",
-      label: "Subject",
-      description: "Subject line for the MMS message.",
-    },
-    // Dynamic prop definitions from OpenAPI
-    sender: {
-      type: "string",
-      label: "Sender",
-      description: "The sender ID which can be alphanumeric or numeric (e.g., CompanyName). Make sure you don't exceed character limit.",
-    },
-    destinations: {
-      type: "string[]",
-      label: "Destinations",
-      description: "Array of destination phone numbers in international format.",
-    },
-    messageText: {
-      type: "string",
-      label: "Message Text", 
-      description: "Content of the message being sent.",
-    },
+    // OpenAPI Generated Props - END
   },
   methods: {
-    _baseUrl() {
-      return (this.$auth.base_url.startsWith("https://"))
-        ? this.$auth.base_url
-        : `https://${this.$auth.base_url}`;
-    },
-    _headers() {
-      return {
-        "Authorization": `App ${this.$auth.api_key}`,
-        "Content-type": "application/json",
-      };
-    },
-    _makeRequest({
-      $ = this, path, ...otherOpts
-    }) {
-      return axios($, {
-        ...otherOpts,
-        url: `${this._baseUrl()}${path}`,
-        headers: this._headers(),
-      });
-    },
-
-    // Initialize OpenAPI generator
-    async _initOpenAPI() {
-      if (!this._openApiGenerator) {
-        this._openApiGenerator = new InfobipOpenAPIGenerator(this);
-        await this._openApiGenerator.generateMethods();
-      }
-      return this._openApiGenerator;
-    },
-
-    // Get available OpenAPI methods
-    async getOpenAPIMethods() {
-      const generator = await this._initOpenAPI();
-      return generator.listMethods();
-    },
-
-    // Call any OpenAPI method dynamically
-    async callOpenAPIMethod(methodName, opts = {}) {
-      const generator = await this._initOpenAPI();
-      const method = generator.getMethod(methodName);
-      
-      if (!method) {
-        throw new Error(`Method '${methodName}' not found. Available methods: ${generator.listMethods().join(', ')}`);
-      }
-
-      return this._makeRequest({
-        method: method.method,
-        path: method.path,
-        ...opts,
-      });
-    },
-
-    // Existing manual methods for backward compatibility
-    listApplications(opts = {}) {
-      return this._makeRequest({
-        path: "/provisioning/1/applications",
-        ...opts,
-      });
-    },
-    listEntities(opts = {}) {
-      return this._makeRequest({
-        path: "/provisioning/1/entities",
-        ...opts,
-      });
-    },
-    listResources(opts = {}) {
-      return this._makeRequest({
-        path: "/provisioning/1/associations",
-        ...opts,
-      });
-    },
-
-    // Legacy SMS methods (for backward compatibility)
-    sendSms(opts = {}) {
-      return this._makeRequest({
-        method: "POST",
-        path: "/sms/2/text/advanced",
-        ...opts,
-      });
-    },
-    sendSmsV3(opts = {}) {
+    // OpenAPI Generated Methods - START
+    /**
+     * Send SMS message
+     *
+* With this API method, you can do anything from sending a basic message to
+* one person, all the way to sending customized messages to thousands of
+* recipients in one go. It comes with a range of useful features like
+* transliteration, scheduling, and tracking in a unified way.
+     *
+     * @see https://www.infobip.com/docs/sms
+     * @param {Object} opts - Request options
+     * @example
+     * // Example usage:
+     * await infobip.sendSmsMessages({
+     *   data: {
+     *     messages: [{
+     *       from: "InfoSMS",
+     *       to: "41793026727",
+     *       text: "Hello world!"
+     *     }]
+     *   }
+     * });
+     * @returns {Promise<Object>} API response
+     */
+    sendSmsMessages(opts = {}) {
       return this._makeRequest({
         method: "POST",
         path: "/sms/3/messages",
@@ -219,78 +87,104 @@ export default {
       });
     },
 
-    // Enhanced SMS sending with OpenAPI v3 endpoint
     /**
-     * Send SMS message using the latest v3 API
-     * @see https://api.infobip.com/platform/1/openapi/sms
+     * Get outbound SMS message delivery reports
+     *
+* If you are for any reason unable to receive real-time delivery reports on
+* your endpoint, you can use this API method to learn if and when the
+* message has been delivered to the recipient.
+     *
+     * @see https://www.infobip.com/docs/sms
+     * @param {Object} opts - Request options
+     * @example
+     * // Example usage:
+     * await infobip.getOutboundSmsMessageDeliveryReports({
+     *   params: {
+     *     limit: 10,
+     *     bulkId: 'bulk-id-123'
+     *   }
+     * });
+     * @returns {Promise<Object>} API response
      */
-    async sendSmsMessage(opts = {}) {
-      return this.callOpenAPIMethod('sendSmsMessages', opts);
+    getOutboundSmsMessageDeliveryReports(opts = {}) {
+      return this._makeRequest({
+        method: "GET",
+        path: "/sms/1/reports",
+        ...opts,
+      });
     },
 
     /**
-     * Get SMS delivery reports using v3 API
+     * Reschedule SMS messages
+     *
+* Change the date and time of already scheduled messages. To schedule a
+* message, use the sendAt field when sending a message.
+     *
+     * @see https://www.infobip.com/docs/sms
+     * @param {Object} opts - Request options
+     * @example
+     * // Example usage:
+     * await infobip.rescheduleSmsMessages({
+     *   data: {
+     *     sendAt: "2024-12-25T10:00:00.000+01:00"
+     *   }
+     * });
+     * @returns {Promise<Object>} API response
      */
-    async getSmsDeliveryReports(opts = {}) {
-      return this.callOpenAPIMethod('getSmsDeliveryReports', opts);
+    rescheduleSmsMessages(opts = {}) {
+      return this._makeRequest({
+        method: "PUT",
+        path: "/sms/1/bulks",
+        ...opts,
+      });
     },
 
     /**
-     * Get SMS logs using v3 API  
+     * Update scheduled SMS messages status
+     *
+* Change the status or completely cancel sending of scheduled messages. To
+* schedule a message, use the sendAt field when sending a message.
+     *
+     * @see https://www.infobip.com/docs/sms
+     * @param {Object} opts - Request options
+     * @example
+     * // Example usage:
+     * await infobip.updateScheduledSmsMessagesStatus({
+     *   data: {
+     *     status: "PAUSED"
+     *   }
+     * });
+     * @returns {Promise<Object>} API response
      */
-    async getSmsLogs(opts = {}) {
-      return this.callOpenAPIMethod('getSmsLogs', opts);
-    },
-
-    // Other communication channels
-    sendViberMessage(opts = {}) {
+    updateScheduledSmsMessagesStatus(opts = {}) {
       return this._makeRequest({
-        method: "POST",
-        path: "/viber/2/messages",
-        ...opts,
-      });
-    },
-    sendWhatsappMessage(opts = {}) {
-      return this._makeRequest({
-        method: "POST",
-        path: "/whatsapp/1/message/text",
-        ...opts,
-      });
-    },
-    sendMms(opts = {}) {
-      return this._makeRequest({
-        method: "POST",
-        path: "/mms/1/text",
+        method: "PUT",
+        path: "/sms/1/bulks/status",
         ...opts,
       });
     },
 
-    // Hook management
-    createHook(opts = {}) {
+    /**
+     * Confirm conversion
+     *
+* Use this endpoint to inform the Infobip platform about the successful
+* conversion on your side. Infobip will use this information to monitor SMS
+* performance and provide you with better service.
+     * @param {Object} opts - Request options
+     * @example
+     * // Example usage:
+     * await infobip.logEndTag({ messageId: "example-messageId", ...otherOptions });
+     * @returns {Promise<Object>} API response
+     */
+    logEndTag({
+      messageId, ...opts
+    } = {}) {
       return this._makeRequest({
         method: "POST",
-        path: "/resource-management/1/inbound-message-configurations",
+        path: `/ct/1/log/end/${messageId}`,
         ...opts,
       });
     },
-    deleteHook(webhookId) {
-      return this._makeRequest({
-        method: "DELETE",
-        path: `/resource-management/1/inbound-message-configurations/${webhookId}`,
-      });
-    },
-
-    // Utility methods for debugging
-    async debugOpenAPISpec() {
-      const generator = await this._initOpenAPI();
-      return generator.spec;
-    },
-
-    async debugAvailableMethods() {
-      const generator = await this._initOpenAPI();
-      const methods = generator.listMethods();
-      console.log(`📋 Available OpenAPI methods (${methods.length}):`, methods);
-      return methods;
-    },
+    // OpenAPI Generated Methods - END
   },
 };
