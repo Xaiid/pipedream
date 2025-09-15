@@ -165,7 +165,7 @@ export default {
 
     // Generated methods from Infobip SMS OpenAPI specification
     // Total methods generated: 16
-    // Generated on: 2025-09-15T07:46:21.492Z
+    // Generated on: 2025-09-15T08:18:19.825Z
 
     /**
      * Send SMS message

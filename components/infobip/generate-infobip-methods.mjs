@@ -188,7 +188,7 @@ ${formatDescription(description)}`;
         path += \`\${separator}\${name}=\${encodeURIComponent(value)}\`;
     });`;
     } else {
-      pathHandling = `    const { pathParams, pathQuery, ...rest } = opts;
+      pathHandling = `    const { pathQuery, ...rest } = opts;
     let path = "${path}";
 
     pathQuery?.forEach(({ name, value }) => {
@@ -368,15 +368,13 @@ ${implementation}
       // Update app file
       this.updateAppFile(methods);
 
-      // Clean up
-      this.cleanup();
+      // Keep OpenAPI spec for reference
 
       console.log("\n🎉 Method generation completed successfully!");
       console.log(`📊 Generated ${this.methodCount} methods from OpenAPI specification`);
 
     } catch (error) {
       console.error("\n💥 Generation failed:", error.message);
-      this.cleanup(); // Clean up on error too
       throw error;
     }
   }
@@ -394,7 +392,7 @@ Generates methods for infobip-enhanced.app.mjs from OpenAPI specification.
 Follows standards defined in .claude/generate-actions.prompt.md
 
 Usage:
-  node generate-actions.mjs [options]
+  node generate-infobip-methods.mjs [options]
 
 Options:
   --help, -h    Show this help
