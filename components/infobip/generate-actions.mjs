@@ -1,420 +1,382 @@
 #!/usr/bin/env node
 
-// Action Generator for Infobip Enhanced App
-// Generates Pipedream actions from OpenAPI specification
-// Follows ESLint rules and existing file patterns
+// Script to generate Infobip app methods from OpenAPI specification
+// Follows the standards defined in .claude/generate-actions.prompt.md
+// Downloads OpenAPI spec and generates methods for infobip-enhanced.app.mjs
 
 import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
-import InfobipOpenAPIGenerator from "./lib/openapi-generator.mjs";
+import https from "https";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Configuration
+const CONFIG = {
+  openApiUrl: "https://api.infobip.com/platform/1/openapi/sms",
+  openApiFile: "./openapi-spec.json",
+  appFile: "./infobip-enhanced.app.mjs",
+  methodsStartMarker: "    // Generated methods from Infobip SMS OpenAPI specification",
+  methodsEndMarker: "  },",
+};
 
-class InfobipActionGenerator {
+class InfobipMethodGenerator {
   constructor() {
-    this.componentsDir = __dirname;
-    this.actionsDir = path.join(this.componentsDir, "actions");
-    this.existingActions = new Set();
-    this.generatedCount = 0;
-    this.skippedCount = 0;
-    this.errorCount = 0;
+    this.generatedMethods = [];
+    this.methodCount = 0;
   }
 
-  // Load existing actions to avoid duplicates
-  loadExistingActions() {
-    try {
-      const actionDirs = fs.readdirSync(this.actionsDir, {
-        withFileTypes: true,
-      });
+  // Download OpenAPI specification
+  async downloadOpenApiSpec() {
+    console.log("📡 Downloading OpenAPI specification...");
 
-      for (const dirent of actionDirs) {
-        if (dirent.isDirectory()) {
-          this.existingActions.add(dirent.name);
+    return new Promise((resolve, reject) => {
+      const file = fs.createWriteStream(CONFIG.openApiFile);
+
+      https.get(CONFIG.openApiUrl, (response) => {
+        if (response.statusCode !== 200) {
+          reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`));
+          return;
+        }
+
+        response.pipe(file);
+
+        file.on("finish", () => {
+          file.close();
+          console.log("✅ OpenAPI specification downloaded successfully");
+          resolve();
+        });
+
+        file.on("error", (err) => {
+          fs.unlink(CONFIG.openApiFile, () => {}); // Clean up
+          reject(err);
+        });
+      }).on("error", (err) => {
+        reject(err);
+      });
+    });
+  }
+
+  // Read and parse OpenAPI specification
+  readOpenApiSpec() {
+    console.log("📖 Reading OpenAPI specification...");
+
+    if (!fs.existsSync(CONFIG.openApiFile)) {
+      throw new Error("OpenAPI specification file not found. Please download it first.");
+    }
+
+    const content = fs.readFileSync(CONFIG.openApiFile, "utf8");
+    const spec = JSON.parse(content);
+
+    console.log(`✅ Found ${Object.keys(spec.paths || {}).length} API endpoints`);
+    return spec;
+  }
+
+  // Convert operationId to camelCase method name
+  operationIdToCamelCase(operationId) {
+    if (!operationId) return null;
+
+    return operationId
+      .split("-")
+      .map((word, index) => {
+        if (index === 0) return word.toLowerCase();
+        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+      })
+      .join("");
+  }
+
+  // Generate method name from summary if operationId not available
+  summaryToMethodName(summary) {
+    if (!summary) return "unknownMethod";
+
+    return summary
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, "")
+      .split(/\s+/)
+      .map((word, index) => {
+        if (index === 0) return word;
+        return word.charAt(0).toUpperCase() + word.slice(1);
+      })
+      .join("");
+  }
+
+  // Generate JSDoc comment for method
+  generateJSDoc(operation, path) {
+    const summary = operation.summary || "API method";
+    const description = operation.description || summary;
+    const externalDocs = operation.externalDocs?.url;
+    const hasRequestBody = operation.requestBody && Object.keys(operation.requestBody).length > 0;
+    const pathParams = this.extractPathParameters(path);
+    const queryParams = this.extractQueryParameters(operation);
+
+    // Break long lines for better readability
+    const formatDescription = (text) => {
+      const words = text.split(" ");
+      const lines = [];
+      let currentLine = "     * ";
+
+      for (const word of words) {
+        if ((currentLine + word).length > 95) {
+          lines.push(currentLine.trimEnd());
+          currentLine = "     * " + word + " ";
+        } else {
+          currentLine += word + " ";
         }
       }
 
-      console.log(`📂 Found ${this.existingActions.size} existing actions`);
-    } catch (error) {
-      console.warn("⚠️  Could not read actions directory:", error.message);
-    }
-  }
-
-  // Create action directory and file
-  createActionFile(actionData, overwrite = false) {
-    const actionDir = path.join(this.actionsDir, actionData.actionKey);
-    const actionFile = path.join(actionDir, `${actionData.actionKey}.mjs`);
-
-    // Skip if exists and not overwriting
-    if (!overwrite && this.existingActions.has(actionData.actionKey)) {
-      console.log(`⏭️  Skipping existing action: ${actionData.actionKey}`);
-      this.skippedCount++;
-      return false;
-    }
-
-    try {
-      // Create directory if it doesn't exist
-      if (!fs.existsSync(actionDir)) {
-        fs.mkdirSync(actionDir, {
-          recursive: true,
-        });
+      if (currentLine.trim() !== "*") {
+        lines.push(currentLine.trimEnd());
       }
 
-      // Format content to match ESLint rules
-      const formattedContent = this.formatForESLint(actionData.content);
-
-      // Write action file
-      fs.writeFileSync(actionFile, formattedContent, "utf8");
-
-      console.log(`✅ Generated: ${actionData.actionKey}`);
-      this.generatedCount++;
-      return true;
-    } catch (error) {
-      console.error(`❌ Failed to create ${actionData.actionKey}:`, error.message);
-      this.errorCount++;
-      return false;
-    }
-  }
-
-  // Format content according to ESLint rules
-  formatForESLint(content) {
-    return content
-      // Ensure proper indentation (2 spaces)
-      .replace(/^( {2,})/gm, (match) => {
-        const spaces = match.length;
-        return "  ".repeat(Math.floor(spaces / 2));
-      })
-      // Ensure trailing comma on multiline objects/arrays - more precise pattern
-      .replace(/([}\]"'\w])\n(\s+)([}\]])/g, "$1,\n$2$3")
-      // Ensure object properties are on new lines
-      .replace(/\{\s*(\w)/g, "{\n  $1")
-      .replace(/,\s*(\w)/g, ",\n  $1")
-      // Add trailing newline
-      .replace(/\n?$/, "\n")
-      // Remove trailing spaces
-      .replace(/ +$/gm, "")
-      // Ensure no multiple empty lines
-      .replace(/\n{3,}/g, "\n\n");
-  }
-
-  // Generate action name that follows patterns
-  generateConsistentActionName(operation, path, method) {
-    // Use existing patterns from the codebase
-    if (operation.summary) {
-      // Clean up the summary to match existing patterns
-      return operation.summary
-        .replace(/^(Get|Send|Create|Update|Delete)\s+/i, (match) =>
-          match.charAt(0).toUpperCase() + match.slice(1).toLowerCase())
-        .replace(/\s+sms\s+/gi, " SMS ")
-        .replace(/\s+mms\s+/gi, " MMS ")
-        .trim();
-    }
-
-    // Fallback to generated name with proper capitalization
-    const pathParts = path.split("/").filter((p) => p && !p.startsWith("{"));
-    const methodName = method.charAt(0).toUpperCase() + method.slice(1).toLowerCase();
-    const resource = pathParts
-      .map((p) => p.charAt(0).toUpperCase() + p.slice(1).replace(/-/g, " "))
-      .join(" ");
-
-    return `${methodName} ${resource}`;
-  }
-
-  // Generate action description following existing patterns
-  generateConsistentDescription(operation, actionName) {
-    let description = operation.description || operation.summary || actionName;
-
-    // Clean up description
-    description = description
-      .replace(/[\r\n]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    // Ensure it ends with period if not already
-    if (!description.endsWith(".")) {
-      description += ".";
-    }
-
-    // Add documentation link
-    const docUrl = operation.externalDocs?.url || "https://www.infobip.com/docs/sms";
-    return `${description} [See the documentation](${docUrl})`;
-  }
-
-  // Enhanced action generation with consistent patterns
-  async generateEnhancedActions(options = {}) {
-    const {
-      overwrite = false,
-      filter = null,
-      limit = null,
-    } = options;
-
-    console.log("🚀 Starting Infobip action generation...");
-
-    // Create mock app instance for OpenAPI generator
-    const mockApp = {
-      $auth: {
-        api_key: "mock-key",
-        base_url: "https://api.infobip.com",
-      },
-      _baseUrl: () => "https://api.infobip.com",
-      _headers: () => ({
-        "Authorization": "App mock-key",
-        "Content-type": "application/json",
-      }),
+      return lines.join("\n");
     };
 
-    const generator = new InfobipOpenAPIGenerator(mockApp);
+    let jsDoc = `    /**
+     * ${summary}
+     *
+${formatDescription(description)}`;
 
-    try {
-      // Load existing actions
-      this.loadExistingActions();
-
-      // Generate all actions from OpenAPI spec
-      console.log("📡 Fetching OpenAPI specification...");
-      const actions = await generator.generateAllActions();
-
-      console.log(`📋 Found ${actions.length} potential actions in OpenAPI spec`);
-
-      let processedActions = actions;
-
-      // Apply filter if provided
-      if (filter) {
-        processedActions = actions.filter((action) =>
-          action.actionKey.includes(filter) ||
-          action.actionName.toLowerCase().includes(filter.toLowerCase()));
-        console.log(`🔍 Filtered to ${processedActions.length} actions matching "${filter}"`);
-      }
-
-      // Apply limit if provided
-      if (limit && limit > 0) {
-        processedActions = processedActions.slice(0, limit);
-        console.log(`📏 Limited to first ${processedActions.length} actions`);
-      }
-
-      // Generate action files
-      console.log("⚡ Generating action files...");
-
-      for (const actionData of processedActions) {
-        // Enhance the action with consistent naming
-        actionData.actionName = this.generateConsistentActionName(
-          actionData.operation,
-          actionData.path,
-          actionData.method,
-        );
-
-        // Update the content with enhanced names and descriptions
-        const enhancedContent = this.enhanceActionContent(actionData);
-        actionData.content = enhancedContent;
-
-        this.createActionFile(actionData, overwrite);
-      }
-
-      // Print summary
-      console.log("\n📊 Generation Summary:");
-      console.log(`✅ Generated: ${this.generatedCount}`);
-      console.log(`⏭️  Skipped: ${this.skippedCount}`);
-      console.log(`❌ Errors: ${this.errorCount}`);
-      console.log(`📋 Total processed: ${processedActions.length}`);
-
-      return {
-        generated: this.generatedCount,
-        skipped: this.skippedCount,
-        errors: this.errorCount,
-        total: processedActions.length,
-      };
-
-    } catch (error) {
-      console.error("💥 Action generation failed:", error.message);
-      throw error;
+    if (externalDocs) {
+      jsDoc += `\n     *
+     * @see {@link ${externalDocs}|External Documentation}`;
     }
+
+    jsDoc += `\n     *
+     * @param {{
+     *   data?: object, // Request body${hasRequestBody
+    ? ", required"
+    : ", if applicable"}`;
+
+    if (pathParams.length > 0) {
+      jsDoc += `\n     *   pathParams?: [{
+     *     name: string;
+     *     value: string;
+     *   }] // Path parameters: ${pathParams.join(", ")},`;
+    }
+
+    if (queryParams.length > 0 || path.includes("query")) {
+      jsDoc += `\n     *   pathQuery?: [{
+     *     name: string;
+     *     value: string;
+     *   }] // Query parameters,`;
+    }
+
+    jsDoc += `\n     *   ...rest - Other optional parameters
+     * },
+     * }} [opts] - Optional parameters for the request.
+     * @returns {Promise} - Promise resolving to the API response.
+     */`;
+
+    return jsDoc;
   }
 
-  // Enhance action content with better formatting and patterns
-  enhanceActionContent(actionData) {
-    const {
-      actionKey, operation, path, method,
-    } = actionData;
+  // Generate method implementation following the exact pattern from the prompt
+  generateMethodImplementation(methodName, path, httpMethod) {
+    // Check if path has parameters
+    const hasPathParams = path.includes("{");
 
-    const actionName = this.generateConsistentActionName(operation, path, method);
-    const description = this.generateConsistentDescription(operation, actionName);
-
-    // Parse path parameters
-    const pathParams = path.match(/{([^}]+)}/g)?.map((p) => p.slice(1, -1)) || [];
-
-    // Build props based on operation parameters and request body - use propDefinition pattern
-    const propDefinitions = [];
-
-    // Add path parameters as props with propDefinition pattern
-    for (const param of pathParams) {
-      const label = param.replace(/([A-Z])/g, " $1").replace(/^./, (str) => str.toUpperCase());
-      propDefinitions.push(`    ${param}: {
-      type: "string",
-      label: "${label}",
-      description: "The ${param} parameter for the API call.",
-    }`);
-    }
-
-    // Add common props based on the endpoint type using propDefinition pattern
-    if (path.includes("/messages") || path.includes("/sms")) {
-      if (method.toUpperCase() === "POST") {
-        propDefinitions.push(`    from: {
-      propDefinition: [
-        infobip,
-        "from",
-      ],
-    }`);
-
-        propDefinitions.push(`    to: {
-      propDefinition: [
-        infobip,
-        "phoneNumber",
-      ],
-    }`);
-
-        propDefinitions.push(`    text: {
-      propDefinition: [
-        infobip,
-        "text",
-      ],
-    }`);
-      }
-    }
-
-    // Add query parameters for GET endpoints
-    if (method.toUpperCase() === "GET") {
-      propDefinitions.push(`    limit: {
-      propDefinition: [
-        infobip,
-        "limit",
-      ],
-      optional: true,
-    }`);
-    }
-
-    // Build props section with proper ESLint formatting
-    let propsSection = "    infobip,";
-    if (propDefinitions.length > 0) {
-      propsSection += "\n" + propDefinitions.join(",\n") + ",";
-    }
-
-    // Escape description properly and keep under 100 chars per line
-    const cleanDescription = description
-      .replace(/\\/g, "")  // Remove escape characters
-      .replace(/"/g, "\\\"")  // Escape quotes properly
-      .replace(/\s+/g, " ")  // Clean whitespace
-      .trim();
-
-    // Use existing pattern - destructure and use data wrapper
-    const destructureProps = [];
-    if (pathParams.length > 0) {
-      destructureProps.push(...pathParams);
-    }
-    if (method.toUpperCase() === "POST" && (path.includes("/messages") || path.includes("/sms"))) {
-      destructureProps.push("from", "to", "text");
-    }
-
-    const allDestructureItems = [
-      "infobip",
-      ...destructureProps,
-    ];
-    const destructureSection = destructureProps.length > 0
-      ? `    const {
-      ${allDestructureItems.join(",\n      ")}
-      ...data
-    } = this;`
-      : "    const { infobip } = this;";
-
-    // Build data object for method call following existing pattern
-    let dataObjectContent = "";
-    if (method.toUpperCase() === "POST" && (path.includes("/messages") || path.includes("/sms"))) {
-      dataObjectContent = `      data: {
-        messages: [
-          {
-            from,
-            to,
-            text,
-            ...data,
-          },
-        ],
-      },`;
-    } else {
-      dataObjectContent = "      ...data,";
-    }
-
-    // Create the complete action content with proper ESLint formatting
-    const actionContent = `import infobip from "../../infobip-enhanced.app.mjs";
-
-export default {
-  key: "${actionKey}",
-  name: "${actionName}",
-  description: "${cleanDescription}",
-  version: "0.0.1",
-  type: "action",
-  props: {
-${propsSection}
-  },
-  async run({ $ }) {
-${destructureSection}
-
-    const response = await infobip.${actionData.methodName}({
-      $,
-${dataObjectContent}
+    let pathHandling;
+    if (hasPathParams) {
+      pathHandling = `    const { pathParams, pathQuery, ...rest } = opts;
+    // Example of paths:
+    // * /ct/1/log/end/{messageId}
+    // * /sms/3/messages
+    //* /whatsapp/{versionId}/message/template/{templateName}
+    let path = \`${path}\`;
+    pathParams.forEach(({ name, value }) => {
+        path = path.replace(\`{\${name}}\`, value);
     });
 
-    $.export("$summary", "${actionName} completed successfully");
-    return response;
-  },
-};
-`;
+    pathQuery?.forEach(({ name, value }) => {
+        const separator = path.includes("?") ? "&" : "?";
+        path += \`\${separator}\${name}=\${encodeURIComponent(value)}\`;
+    });`;
+    } else {
+      pathHandling = `    const { pathParams, pathQuery, ...rest } = opts;
+    let path = "${path}";
 
-    return actionContent;
+    pathQuery?.forEach(({ name, value }) => {
+        const separator = path.includes("?") ? "&" : "?";
+        path += \`\${separator}\${name}=\${encodeURIComponent(value)}\`;
+    });`;
+    }
+
+    return `${pathHandling}
+
+    return this._makeRequest({
+        method: "${httpMethod.toUpperCase()}",
+        path,
+        ...rest,
+    });`;
   }
 
-  // Utility method to clean action directories
-  async cleanActions(pattern = null) {
-    console.log("🧹 Cleaning action directories...");
+  // Extract path parameters from path
+  extractPathParameters(path) {
+    const matches = path.match(/{([^}]+)}/g);
+    return matches
+      ? matches.map((match) => match.slice(1, -1))
+      : [];
+  }
 
-    try {
-      const actionDirs = fs.readdirSync(this.actionsDir, {
-        withFileTypes: true,
-      });
+  // Extract query parameters from operation
+  extractQueryParameters(operation) {
+    const parameters = operation.parameters || [];
+    return parameters
+      .filter((param) => param.in === "query")
+      .map((param) => param.name);
+  }
 
-      let cleanedCount = 0;
+  // Generate complete method
+  generateMethod(path, httpMethod, operation) {
+    const operationId = operation.operationId;
+    const summary = operation.summary;
 
-      for (const dirent of actionDirs) {
-        if (dirent.isDirectory()) {
-          const dirName = dirent.name;
+    // Generate method name
+    let methodName;
+    if (operationId) {
+      methodName = this.operationIdToCamelCase(operationId);
+    } else {
+      methodName = this.summaryToMethodName(summary);
+    }
 
-          // Skip if pattern provided and doesn't match
-          if (pattern && !dirName.includes(pattern)) {
-            continue;
+    // Generate JSDoc
+    const jsDoc = this.generateJSDoc(operation, path, httpMethod);
+
+    // Generate implementation
+    const implementation = this.generateMethodImplementation(methodName, path, httpMethod);
+
+    return `${jsDoc}
+${methodName}(opts = {}) {
+${implementation}
+}`;
+  }
+
+  // Process OpenAPI specification and generate methods
+  generateMethodsFromSpec(spec) {
+    console.log("⚡ Generating methods from OpenAPI specification...");
+
+    const paths = spec.paths || {};
+    const methods = [];
+
+    for (const [
+      path,
+      pathObj,
+    ] of Object.entries(paths)) {
+      for (const [
+        httpMethod,
+        operation,
+      ] of Object.entries(pathObj)) {
+        if (typeof operation === "object" && operation.operationId) {
+          try {
+            const method = this.generateMethod(path, httpMethod, operation);
+            methods.push(method);
+            this.methodCount++;
+          } catch (error) {
+            console.warn(`⚠️  Skipped ${httpMethod.toUpperCase()} ${path}: ${error.message}`);
           }
-
-          // Skip existing core actions
-          if ([
-            "send-sms",
-            "send-whatsapp-text-message",
-            "send-viber-text-message",
-          ].includes(dirName)) {
-            console.log(`⏭️  Skipping core action: ${dirName}`);
-            continue;
-          }
-
-          const fullPath = path.join(this.actionsDir, dirName);
-          fs.rmSync(fullPath, {
-            recursive: true,
-            force: true,
-          });
-          console.log(`🗑️  Removed: ${dirName}`);
-          cleanedCount++;
         }
       }
+    }
 
-      console.log(`✅ Cleaned ${cleanedCount} action directories`);
-      return cleanedCount;
+    console.log(`✅ Generated ${this.methodCount} methods`);
+    return methods;
+  }
+
+  // Update the infobip-enhanced.app.mjs file
+  updateAppFile(methods) {
+    console.log("📝 Updating infobip-enhanced.app.mjs file...");
+
+    if (!fs.existsSync(CONFIG.appFile)) {
+      throw new Error(`App file not found: ${CONFIG.appFile}`);
+    }
+
+    const content = fs.readFileSync(CONFIG.appFile, "utf8");
+    const lines = content.split("\n");
+
+    // Find markers
+    const startIndex = lines.findIndex((line) => line.includes("Generated methods from Infobip"));
+    // Find the closing brace of the methods object
+    let endIndex = -1;
+
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].trim() === "};" && i > 0 && lines[i - 1].trim() === "},") {
+        endIndex = i - 1; // The "  }," line
+        break;
+      }
+    }
+
+    if (startIndex === -1) {
+      throw new Error("Could not find method start marker in app file");
+    }
+    if (endIndex === -1) {
+      throw new Error("Could not find method end marker in app file. Looking for the methods object closing brace");
+    }
+
+    // Generate new content
+    const timestamp = new Date().toISOString();
+    const methodsHeader = [
+      "",
+      "    // Generated methods from Infobip SMS OpenAPI specification",
+      `    // Total methods generated: ${this.methodCount}`,
+      `    // Generated on: ${timestamp}`,
+      "",
+    ];
+
+    // Combine everything
+    const methodLines = methods.map((method, index) => {
+      const isLast = index === methods.length - 1;
+      return method + (isLast
+        ? ""
+        : ",");
+    }).join("\n")
+      .split("\n");
+
+    const newLines = [
+      ...lines.slice(0, startIndex),
+      ...methodsHeader,
+      ...methodLines,
+      "",
+      "  },",
+      "};",
+    ];
+
+    // Write back to file
+    const newContent = newLines.join("\n");
+    fs.writeFileSync(CONFIG.appFile, newContent, "utf8");
+
+    console.log(`✅ Updated ${CONFIG.appFile} with ${this.methodCount} methods`);
+  }
+
+  // Clean up temporary files
+  cleanup() {
+    if (fs.existsSync(CONFIG.openApiFile)) {
+      fs.unlinkSync(CONFIG.openApiFile);
+      console.log("🧹 Cleaned up temporary files");
+    }
+  }
+
+  // Main generation process
+  async generate() {
+    try {
+      console.log("🚀 Starting Infobip method generation...");
+
+      // Download OpenAPI spec
+      await this.downloadOpenApiSpec();
+
+      // Read and parse spec
+      const spec = this.readOpenApiSpec();
+
+      // Generate methods
+      const methods = this.generateMethodsFromSpec(spec);
+
+      // Update app file
+      this.updateAppFile(methods);
+
+      // Clean up
+      this.cleanup();
+
+      console.log("\n🎉 Method generation completed successfully!");
+      console.log(`📊 Generated ${this.methodCount} methods from OpenAPI specification`);
+
     } catch (error) {
-      console.error("❌ Error cleaning actions:", error.message);
+      console.error("\n💥 Generation failed:", error.message);
+      this.cleanup(); // Clean up on error too
       throw error;
     }
   }
@@ -423,54 +385,33 @@ ${dataObjectContent}
 // CLI Interface
 async function main() {
   const args = process.argv.slice(2);
-  const generator = new InfobipActionGenerator();
 
-  try {
-    if (args.includes("--clean")) {
-      const pattern = args[args.indexOf("--clean") + 1];
-      await generator.cleanActions(pattern);
-      return;
-    }
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log(`
+Infobip Method Generator
 
-    const options = {
-      overwrite: args.includes("--overwrite") || args.includes("-f"),
-      filter: args.includes("--filter")
-        ? args[args.indexOf("--filter") + 1]
-        : null,
-      limit: args.includes("--limit")
-        ? parseInt(args[args.indexOf("--limit") + 1])
-        : null,
-    };
-
-    if (args.includes("--help") || args.includes("-h")) {
-      console.log(`
-Infobip Action Generator
+Generates methods for infobip-enhanced.app.mjs from OpenAPI specification.
+Follows standards defined in .claude/generate-actions.prompt.md
 
 Usage:
   node generate-actions.mjs [options]
 
 Options:
-  --overwrite, -f     Overwrite existing actions
-  --filter <pattern>  Only generate actions matching pattern
-  --limit <number>    Limit number of actions to generate  
-  --clean [pattern]   Clean action directories (optionally matching pattern)
-  --help, -h         Show this help
+  --help, -h    Show this help
 
-Examples:
-  node generate-actions.mjs
-  node generate-actions.mjs --overwrite --filter sms
-  node generate-actions.mjs --limit 5
-  node generate-actions.mjs --clean infobip-
-      `);
-      return;
-    }
+The script will:
+1. Download the OpenAPI spec from ${CONFIG.openApiUrl}
+2. Parse the specification and generate methods
+3. Update ${CONFIG.appFile} with the new methods
+4. Clean up temporary files
+    `);
+    return;
+  }
 
-    const result = await generator.generateEnhancedActions(options);
+  const generator = new InfobipMethodGenerator();
 
-    if (result.generated > 0) {
-      console.log("\n🎉 Action generation completed successfully!");
-    }
-
+  try {
+    await generator.generate();
   } catch (error) {
     console.error("\n💥 Generation failed:", error.message);
     process.exit(1);
@@ -478,7 +419,7 @@ Examples:
 }
 
 // Export for use as module
-export default InfobipActionGenerator;
+export default InfobipMethodGenerator;
 
 // Run if called directly
 if (import.meta.url === `file://${process.argv[1]}`) {
