@@ -13,7 +13,7 @@
     "access": "public"
   },
   "scripts": {
-    "generate-actions": "node generate-actions.mjs",
+    "generate-actions": "node generate-infobip-methods.mjs",
     "generate-infobip-app": "node generate-infobip-app.mjs"
   },
   "dependencies": {
