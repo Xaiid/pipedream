@@ -13,8 +13,8 @@
     "access": "public"
   },
   "scripts": {
-    "generate-actions": "node generate-infobip-methods.mjs",
-    "generate-infobip-app": "node generate-infobip-app.mjs"
+    "generate-infobip-enhanced-app": "node generate-infobip-enhanced-app.mjs",
+    "generate-infobip-actions": "node generate-infobip-actions.mjs"
   },
   "dependencies": {
     "@pipedream/platform": "^1.6.2"

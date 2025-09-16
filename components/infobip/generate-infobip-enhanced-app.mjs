@@ -392,7 +392,7 @@ Generates methods for infobip-enhanced.app.mjs from OpenAPI specification.
 Follows standards defined in .claude/generate-actions.prompt.md
 
 Usage:
-  node generate-infobip-methods.mjs [options]
+  node generate-infobip-enhanced-app.mjs [options]
 
 Options:
   --help, -h    Show this help
