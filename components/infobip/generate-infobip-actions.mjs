@@ -4,9 +4,11 @@ import path from "path";
 /**
  * Script to automatically generate Pipedream actions for Infobip enhanced app methods
  * Parses the enhanced app file and creates action files for methods without existing actions
+ * Now includes explicit parameter extraction from OpenAPI specification
  */
 
 const ENHANCED_APP_PATH = "./infobip-enhanced.app.mjs";
+const OPENAPI_SPEC_PATH = "./openapi-spec.json";
 const ACTIONS_DIR = "./actions";
 const ACTION_TEMPLATE_PATH = "../../infobip-enhanced.app.mjs";
 
@@ -42,6 +44,114 @@ const METHOD_NAME_MAP = {
   getOutboundSmsMessageLogsV3: "Get Outbound SMS Message Logs V3",
   getOutboundSmsMessageDeliveryReports: "Get Outbound SMS Message Delivery Reports",
   getOutboundSmsMessageLogs: "Get Outbound SMS Message Logs",
+};
+
+// Load and parse OpenAPI specification
+async function loadOpenAPISpec() {
+  try {
+    const specContent = await fs.readFile(OPENAPI_SPEC_PATH, "utf8");
+    return JSON.parse(specContent);
+  } catch (error) {
+    console.warn("Could not load OpenAPI spec:", error.message);
+    return null;
+  }
+}
+
+// Extract parameters from OpenAPI specification for a given path and method
+function extractOpenAPIParameters(spec, methodPath, httpMethod) {
+  if (!spec || !spec.paths) return {};
+  
+  const pathSpec = spec.paths[methodPath];
+  if (!pathSpec) return {};
+  
+  const operation = pathSpec[httpMethod.toLowerCase()];
+  if (!operation) return {};
+  
+  const parameters = {
+    pathParams: [],
+    queryParams: [],
+    bodyParams: {},
+    bodySchema: null,
+  };
+  
+  // Extract path and query parameters
+  if (operation.parameters) {
+    operation.parameters.forEach(param => {
+      if (param.in === "path") {
+        parameters.pathParams.push({
+          name: param.name,
+          required: param.required || false,
+          type: param.schema?.type || "string",
+          description: param.description || "",
+        });
+      } else if (param.in === "query") {
+        parameters.queryParams.push({
+          name: param.name,
+          required: param.required || false,
+          type: param.schema?.type || "string",
+          description: param.description || "",
+          enum: param.schema?.enum || null,
+        });
+      }
+    });
+  }
+  
+  // Extract request body parameters
+  if (operation.requestBody) {
+    const content = operation.requestBody.content;
+    if (content && content["application/json"]) {
+      const schema = content["application/json"].schema;
+      parameters.bodySchema = schema;
+      
+      // Extract properties from schema
+      if (schema && schema.properties) {
+        extractSchemaProperties(schema.properties, parameters.bodyParams, "");
+      }
+    }
+  }
+  
+  return parameters;
+}
+
+// Recursively extract properties from JSON schema
+function extractSchemaProperties(properties, result, prefix = "") {
+  for (const [key, prop] of Object.entries(properties)) {
+    const fullKey = prefix ? `${prefix}.${key}` : key;
+    
+    if (prop.type === "object" && prop.properties) {
+      extractSchemaProperties(prop.properties, result, fullKey);
+    } else if (prop.type === "array" && prop.items && prop.items.properties) {
+      extractSchemaProperties(prop.items.properties, result, `${fullKey}[]`);
+    } else {
+      result[fullKey] = {
+        type: prop.type || "string",
+        description: prop.description || "",
+        required: false, // Will be set based on parent schema's required array
+        enum: prop.enum || null,
+        example: prop.example || null,
+      };
+    }
+  }
+}
+
+// Map method names to their OpenAPI paths and HTTP methods
+const METHOD_TO_OPENAPI_MAP = {
+  sendSmsMessages: { path: "/sms/3/messages", method: "POST" },
+  sendSmsMessagesOverQueryParameters: { path: "/sms/3/text/query", method: "GET" },
+  sendSmsMessageOverQueryParameters: { path: "/sms/1/text/query", method: "GET" },
+  previewSmsMessage: { path: "/sms/1/preview", method: "POST" },
+  sendSmsMessage: { path: "/sms/2/text/advanced", method: "POST" },
+  sendBinarySmsMessage: { path: "/sms/2/binary/advanced", method: "POST" },
+  getScheduledSmsMessages: { path: "/sms/1/bulks", method: "GET" },
+  rescheduleSmsMessages: { path: "/sms/1/bulks", method: "PUT" },
+  getScheduledSmsMessagesStatus: { path: "/sms/1/bulks/status", method: "GET" },
+  updateScheduledSmsMessagesStatus: { path: "/sms/1/bulks/status", method: "PUT" },
+  logEndTag: { path: "/ct/1/log/end/{messageId}", method: "POST" },
+  getInboundSmsMessages: { path: "/sms/1/inbox/reports", method: "GET" },
+  getOutboundSmsMessageDeliveryReportsV3: { path: "/sms/3/reports", method: "GET" },
+  getOutboundSmsMessageLogsV3: { path: "/sms/3/logs", method: "GET" },
+  getOutboundSmsMessageDeliveryReports: { path: "/sms/1/reports", method: "GET" },
+  getOutboundSmsMessageLogs: { path: "/sms/1/logs", method: "GET" },
 };
 
 // Map method names to kebab-case for action keys
@@ -126,54 +236,90 @@ function parseMethodInfo(methodText) {
   };
 }
 
-// Generate props based on method characteristics following exact template
-function generateProps(methodInfo) {
-  const props = [
-    "infobip",
-  ];
-
-  const {
-    methodName, hasData, paramDetails,
-  } = methodInfo;
-
-  // Phone number prop for methods that need destinations
-  if (paramDetails?.requiresPhoneNumber) {
-    props.push(`
+// Generate props based on OpenAPI parameters
+function generateProps(methodInfo, openApiParams) {
+  const props = ["infobip"];
+  
+  // Add path parameters
+  if (openApiParams?.pathParams) {
+    openApiParams.pathParams.forEach(param => {
+      let propDef;
+      if (param.name === "messageId") {
+        propDef = `
+    ${param.name}: {
+      propDefinition: [infobip, "messageId"],
+      optional: ${!param.required},
+    }`;
+      } else {
+        propDef = `
+    ${param.name}: {
+      type: "${param.type}",
+      label: "${param.name.charAt(0).toUpperCase() + param.name.slice(1)}",
+      description: "${param.description || `${param.name} parameter`}",
+      optional: ${!param.required},
+    }`;
+      }
+      props.push(propDef);
+    });
+  }
+  
+  // Add query parameters
+  if (openApiParams?.queryParams) {
+    openApiParams.queryParams.forEach(param => {
+      let propDef;
+      const typeMapping = {
+        integer: "integer",
+        number: "number", 
+        boolean: "boolean",
+        string: "string",
+      };
+      
+      propDef = `
+    ${param.name}: {
+      type: "${typeMapping[param.type] || "string"}",
+      label: "${param.name.charAt(0).toUpperCase() + param.name.slice(1).replace(/([A-Z])/g, ' $1')}",
+      description: "${param.description || `${param.name} parameter`}",
+      optional: ${!param.required},`;
+      
+      if (param.enum) {
+        propDef += `
+      options: ${JSON.stringify(param.enum)},`;
+      }
+      
+      propDef += `
+    }`;
+      props.push(propDef);
+    });
+  }
+  
+  // Add common body parameters for SMS methods (only for non-query parameter methods)
+  if (methodInfo.methodName.includes("send") && !methodInfo.methodName.includes("OverQueryParameters") && openApiParams?.bodyParams) {
+    // Add standard SMS props using prop definitions where available
+    if (openApiParams.bodyParams.messages || openApiParams.bodyParams.to) {
+      props.push(`
     phoneNumber: {
       propDefinition: [infobip, "phoneNumber"],
       optional: false,
     }`);
-  }
-
-  // Text content prop for messaging methods
-  if (paramDetails?.requiresText) {
-    props.push(`
+    }
+    
+    if (openApiParams.bodyParams.text || openApiParams.bodyParams["messages[].text"]) {
+      props.push(`
     text: {
       propDefinition: [infobip, "text"],
       optional: false,
     }`);
-  }
-
-  // From sender prop for messaging methods
-  if (paramDetails?.requiresFrom) {
-    props.push(`
+    }
+    
+    if (openApiParams.bodyParams.from || openApiParams.bodyParams["messages[].from"]) {
+      props.push(`
     from: {
       propDefinition: [infobip, "from"],
       optional: true,
     }`);
-  }
-
-  // Message ID prop for methods with path parameters
-  if (paramDetails?.hasMessageId) {
-    props.push(`
-    messageId: {
-      propDefinition: [infobip, "messageId"],
-      optional: false,
-    }`);
-  }
-
-  // Add common optional props for SMS sending methods
-  if (methodName.includes("send") && hasData) {
+    }
+    
+    // Add application and entity IDs for sending methods
     props.push(`
     applicationId: {
       propDefinition: [infobip, "applicationId"],
@@ -184,53 +330,125 @@ function generateProps(methodInfo) {
       optional: true,
     }`);
   }
-
-  // Add query parameter props for methods that support them
-  if (paramDetails?.hasQueryParams || methodName.includes("get") || methodName.includes("Schedule")) {
+  
+  // Add application and entity IDs for query parameter sending methods
+  if (methodInfo.methodName.includes("send") && methodInfo.methodName.includes("OverQueryParameters")) {
     props.push(`
-    limit: {
-      type: "integer",
-      label: "Limit",
-      description: "Maximum number of results to return. Default is 50.",
+    applicationId: {
+      propDefinition: [infobip, "applicationId"],
       optional: true,
-      default: 50,
+    },
+    entityId: {
+      propDefinition: [infobip, "entityId"],
+      optional: true,
     }`);
+  }
+  
+  // Add additional body parameters as generic props
+  if (openApiParams?.bodyParams) {
+    const skipParams = new Set(['messages', 'to', 'text', 'from', 'applicationId', 'entityId']);
+    
+    Object.entries(openApiParams.bodyParams).forEach(([key, param]) => {
+      // Skip array notation and already handled params
+      if (key.includes('[]') || skipParams.has(key)) return;
+      
+      const typeMapping = {
+        integer: "integer",
+        number: "number", 
+        boolean: "boolean",
+        string: "string",
+        object: "object",
+        array: "string[]",
+      };
+      
+      const propDef = `
+    ${key}: {
+      type: "${typeMapping[param.type] || "string"}",
+      label: "${key.charAt(0).toUpperCase() + key.slice(1).replace(/([A-Z])/g, ' $1')}",
+      description: "${param.description || `${key} parameter`}",
+      optional: ${!param.required},${param.example ? `
+      default: ${JSON.stringify(param.example)},` : ''}
+    }`;
+      props.push(propDef);
+    });
   }
 
   return props.join(",");
 }
 
-// Generate the run method based on method characteristics following exact template
-function generateRunMethod(methodInfo) {
-  const {
-    methodName, hasData, hasPathParams, hasPathQuery, paramDetails,
-  } = methodInfo;
-
+// Generate the run method based on OpenAPI parameters
+function generateRunMethod(methodInfo, openApiParams) {
+  const { methodName } = methodInfo;
+  
+  let destructuring = "const { infobip";
   let methodCall = "";
-  let destructuring;
-
-  // Handle path parameters (like messageId)
-  if (hasPathParams) {
-    if (paramDetails?.hasMessageId) {
-      destructuring = "const { infobip, messageId, ...params } = this;";
-      methodCall = `
-    const response = await infobip.${methodName}({
-      $,
-      pathParams: [{ name: "messageId", value: messageId }],
-    });`;
-    } else {
-      destructuring = "const { infobip, ...params } = this;";
-      methodCall = `
-    const response = await infobip.${methodName}({
-      $,
-      pathParams: params.pathParams || [],
-    });`;
-    }
+  
+  // Collect all parameter names for destructuring
+  const paramNames = new Set();
+  
+  // Add path parameters
+  if (openApiParams?.pathParams) {
+    openApiParams.pathParams.forEach(param => {
+      paramNames.add(param.name);
+    });
   }
-  // Handle methods with request body data
-  else if (hasData) {
-    if (methodName.includes("sendSmsMessages") || methodName.includes("SendSmsMessages")) {
-      destructuring = "const { infobip, phoneNumber, text, from, applicationId, entityId, ...params } = this;";
+  
+  // Add query parameters
+  if (openApiParams?.queryParams) {
+    openApiParams.queryParams.forEach(param => {
+      paramNames.add(param.name);
+    });
+  }
+  
+  // Add SMS-specific parameters for sending methods (only for non-query parameter methods)
+  if (methodName.includes("send") && !methodName.includes("OverQueryParameters") && openApiParams?.bodyParams) {
+    if (openApiParams.bodyParams.messages || openApiParams.bodyParams.to) {
+      paramNames.add("phoneNumber");
+    }
+    if (openApiParams.bodyParams.text || openApiParams.bodyParams["messages[].text"]) {
+      paramNames.add("text");
+    }
+    if (openApiParams.bodyParams.from || openApiParams.bodyParams["messages[].from"]) {
+      paramNames.add("from");
+    }
+    paramNames.add("applicationId");
+    paramNames.add("entityId");
+  }
+  
+  // Add other body parameters
+  if (openApiParams?.bodyParams) {
+    const skipParams = new Set(['messages', 'to', 'text', 'from', 'applicationId', 'entityId']);
+    Object.keys(openApiParams.bodyParams).forEach(key => {
+      if (!key.includes('[]') && !skipParams.has(key)) {
+        paramNames.add(key);
+      }
+    });
+  }
+  
+  // Build destructuring assignment
+  if (paramNames.size > 0) {
+    destructuring += ", " + Array.from(paramNames).join(", ");
+  }
+  destructuring += ", ...params } = this;";
+  
+  // Generate method call based on method type
+  if (openApiParams?.pathParams && openApiParams.pathParams.length > 0) {
+    // Method with path parameters
+    const pathParamsCode = openApiParams.pathParams
+      .map(param => `{ name: "${param.name}", value: ${param.name} }`)
+      .join(", ");
+    
+    methodCall = `
+    const response = await infobip.${methodName}({
+      $,
+      pathParams: [${pathParamsCode}],${openApiParams.queryParams && openApiParams.queryParams.length > 0 ? `
+      pathQuery: Object.entries({ ${openApiParams.queryParams.map(p => p.name).join(", ")} })
+        .filter(([key, value]) => value !== undefined && value !== null)
+        .map(([key, value]) => ({ name: key, value: value.toString() })),` : ''}
+    });`;
+  } else if (methodName.includes("send") && !methodName.includes("OverQueryParameters") && openApiParams?.bodyParams) {
+    // SMS sending methods with structured data (not query parameter methods)
+    if (methodName.includes("sendSmsMessages")) {
       methodCall = `
     const response = await infobip.${methodName}({
       $,
@@ -246,8 +464,7 @@ function generateRunMethod(methodInfo) {
         ],
       },
     });`;
-    } else if (methodName.includes("sendSmsMessage") && !methodName.includes("Messages")) {
-      destructuring = "const { infobip, phoneNumber, text, from, applicationId, entityId, ...params } = this;";
+    } else {
       methodCall = `
     const response = await infobip.${methodName}({
       $,
@@ -260,23 +477,13 @@ function generateRunMethod(methodInfo) {
         ...params,
       },
     });`;
-    } else {
-      destructuring = "const { infobip, ...params } = this;";
-      methodCall = `
-    const response = await infobip.${methodName}({
-      $,
-      data: {
-        ...params,
-      },
-    });`;
     }
-  }
-  // Handle methods with query parameters
-  else if (hasPathQuery) {
-    destructuring = "const { infobip, limit, ...params } = this;";
+  } else if (openApiParams?.queryParams && openApiParams.queryParams.length > 0) {
+    // Method with query parameters
+    const queryParamNames = openApiParams.queryParams.map(p => p.name);
     methodCall = `
     const pathQuery = [];
-    if (limit) pathQuery.push({ name: "limit", value: limit.toString() });
+    ${queryParamNames.map(name => `if (${name} !== undefined && ${name} !== null) pathQuery.push({ name: "${name}", value: ${name}.toString() });`).join('\n    ')}
 
     Object.entries(params).forEach(([key, value]) => {
       if (value !== undefined && value !== null) {
@@ -288,10 +495,18 @@ function generateRunMethod(methodInfo) {
       $,
       pathQuery: pathQuery.length > 0 ? pathQuery : undefined,
     });`;
-  }
-  // Simple methods with no parameters
-  else {
-    destructuring = "const { infobip } = this;";
+  } else if (openApiParams?.bodyParams && Object.keys(openApiParams.bodyParams).length > 0) {
+    // Method with body parameters
+    methodCall = `
+    const response = await infobip.${methodName}({
+      $,
+      data: {
+        ${Array.from(paramNames).filter(name => !['infobip'].includes(name)).map(name => `...(${name} !== undefined && { ${name} }),`).join('\n        ')}
+        ...params,
+      },
+    });`;
+  } else {
+    // Simple method with no specific parameters
     methodCall = `
     const response = await infobip.${methodName}({ $ });`;
   }
@@ -323,12 +538,12 @@ ${methodCall}
   },`;
 }
 
-// Generate complete action file content following the exact template from prompt
-function generateActionFile(methodInfo) {
+// Generate complete action file content using OpenAPI parameters
+function generateActionFile(methodInfo, openApiParams) {
   const actionName = METHOD_NAME_MAP[methodInfo.methodName] || methodInfo.summary;
   const kebabName = methodNameToKebabCase(methodInfo.methodName);
-  const props = generateProps(methodInfo);
-  const runMethod = generateRunMethod(methodInfo);
+  const props = generateProps(methodInfo, openApiParams);
+  const runMethod = generateRunMethod(methodInfo, openApiParams);
 
   let description = methodInfo.description;
   if (description.length > 200) {
@@ -413,7 +628,7 @@ async function extractMethods() {
 }
 
 // Create action directory and file with proper error handling
-async function createActionFile(methodInfo) {
+async function createActionFile(methodInfo, openApiSpec) {
   const kebabName = methodNameToKebabCase(methodInfo.methodName);
   const actionDir = path.join(ACTIONS_DIR, `infobip-${kebabName}`);
   const actionFile = path.join(actionDir, `infobip-${kebabName}.mjs`);
@@ -424,13 +639,25 @@ async function createActionFile(methodInfo) {
       throw new Error("Invalid method info: missing required fields");
     }
 
+    // Extract OpenAPI parameters for this method
+    let openApiParams = {};
+    if (openApiSpec && METHOD_TO_OPENAPI_MAP[methodInfo.methodName]) {
+      const { path: apiPath, method: httpMethod } = METHOD_TO_OPENAPI_MAP[methodInfo.methodName];
+      openApiParams = extractOpenAPIParameters(openApiSpec, apiPath, httpMethod);
+      console.log(`📋 Extracted OpenAPI params for ${methodInfo.methodName}:`, {
+        pathParams: openApiParams.pathParams?.length || 0,
+        queryParams: openApiParams.queryParams?.length || 0,
+        bodyParams: Object.keys(openApiParams.bodyParams || {}).length,
+      });
+    }
+
     // Create directory if it doesn't exist
     await fs.mkdir(actionDir, {
       recursive: true,
     });
 
     // Generate and write action file
-    const actionContent = generateActionFile(methodInfo);
+    const actionContent = generateActionFile(methodInfo, openApiParams);
 
     // Validate generated content
     if (!actionContent || actionContent.trim().length === 0) {
@@ -449,9 +676,18 @@ async function createActionFile(methodInfo) {
 
 // Main execution function
 async function generateActions() {
-  console.log("🚀 Starting Infobip action generation...\n");
+  console.log("🚀 Starting Infobip action generation with OpenAPI parameter extraction...\n");
 
   try {
+    // Load OpenAPI specification
+    console.log("📖 Loading OpenAPI specification...");
+    const openApiSpec = await loadOpenAPISpec();
+    if (openApiSpec) {
+      console.log(`✅ Loaded OpenAPI spec version ${openApiSpec.info?.version || 'unknown'}\n`);
+    } else {
+      console.log("⚠️  Could not load OpenAPI spec, using fallback method detection\n");
+    }
+
     // Extract methods from enhanced app
     const methods = await extractMethods();
 
@@ -464,10 +700,11 @@ async function generateActions() {
 
     methods.forEach((method) => {
       const kebabName = methodNameToKebabCase(method.methodName);
-      console.log(`  - ${method.methodName} → infobip-${kebabName}`);
+      const hasOpenApiMapping = METHOD_TO_OPENAPI_MAP[method.methodName] ? "🔗" : "📝";
+      console.log(`  ${hasOpenApiMapping} ${method.methodName} → infobip-${kebabName}`);
     });
 
-    console.log("\n📝 Generating action files...\n");
+    console.log("\n📝 Generating action files with explicit parameters...\n");
 
     // Generate actions
     let successCount = 0;
@@ -475,7 +712,7 @@ async function generateActions() {
 
     for (const method of methods) {
       try {
-        const success = await createActionFile(method);
+        const success = await createActionFile(method, openApiSpec);
         if (success) {
           successCount++;
         } else {
