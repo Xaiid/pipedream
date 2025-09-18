@@ -46,6 +46,26 @@ const METHOD_NAME_MAP = {
   getOutboundSmsMessageLogs: "Get Outbound SMS Message Logs",
 };
 
+// Map method names to clean action keys (without infobip prefix)
+const METHOD_TO_ACTION_KEY_MAP = {
+  sendSmsMessages: "send-sms-messages",
+  sendSmsMessagesOverQueryParameters: "send-sms-messages-over-query-parameters",
+  sendSmsMessageOverQueryParameters: "send-sms-message-over-query-parameters",
+  previewSmsMessage: "preview-sms-message",
+  sendSmsMessage: "send-sms-message",
+  sendBinarySmsMessage: "send-binary-sms-message",
+  getScheduledSmsMessages: "get-scheduled-sms-messages",
+  rescheduleSmsMessages: "reschedule-sms-messages",
+  getScheduledSmsMessagesStatus: "get-scheduled-sms-messages-status",
+  updateScheduledSmsMessagesStatus: "update-scheduled-sms-messages-status",
+  logEndTag: "log-end-tag",
+  getInboundSmsMessages: "get-inbound-sms-messages",
+  getOutboundSmsMessageDeliveryReportsV3: "get-outbound-sms-message-delivery-reports-v3",
+  getOutboundSmsMessageLogsV3: "get-outbound-sms-message-logs-v3",
+  getOutboundSmsMessageDeliveryReports: "get-outbound-sms-message-delivery-reports",
+  getOutboundSmsMessageLogs: "get-outbound-sms-message-logs",
+};
+
 // Load and parse OpenAPI specification
 async function loadOpenAPISpec() {
   try {
@@ -541,7 +561,7 @@ ${methodCall}
 // Generate complete action file content using OpenAPI parameters
 function generateActionFile(methodInfo, openApiParams) {
   const actionName = METHOD_NAME_MAP[methodInfo.methodName] || methodInfo.summary;
-  const kebabName = methodNameToKebabCase(methodInfo.methodName);
+  const actionKey = METHOD_TO_ACTION_KEY_MAP[methodInfo.methodName] || methodNameToKebabCase(methodInfo.methodName);
   const props = generateProps(methodInfo, openApiParams);
   const runMethod = generateRunMethod(methodInfo, openApiParams);
 
@@ -553,7 +573,7 @@ function generateActionFile(methodInfo, openApiParams) {
   return `import infobip from "${ACTION_TEMPLATE_PATH}";
 
 export default {
-  key: "infobip-${kebabName}",
+  key: "infobip-${actionKey}",
   name: "${actionName}",
   description:
     "${description} [See the documentation](${methodInfo.externalDoc})",
@@ -576,11 +596,29 @@ async function scanExistingActions() {
     });
 
     for (const dirent of actionDirs) {
-      if (dirent.isDirectory() && dirent.name.startsWith("infobip-")) {
-        // Extract method name from action directory name
-        const actionName = dirent.name.replace("infobip-", "");
-        const methodName = actionName.replace(/-([a-z])/g, (match, letter) => letter.toUpperCase());
-        existingActions.add(methodName);
+      if (dirent.isDirectory()) {
+        // Check both old and new naming schemes
+        if (dirent.name.startsWith("infobip-")) {
+          // Old naming scheme: infobip-get-inbound-sms-messages
+          const actionName = dirent.name.replace("infobip-", "");
+          const methodName = actionName.replace(/-([a-z])/g, (match, letter) => letter.toUpperCase());
+          existingActions.add(methodName);
+        } else {
+          // New naming scheme: get-inbound-sms-messages
+          // Find the method name that maps to this action key
+          for (const [methodName, actionKey] of Object.entries(METHOD_TO_ACTION_KEY_MAP)) {
+            if (actionKey === dirent.name) {
+              existingActions.add(methodName);
+              break;
+            }
+          }
+          
+          // Fallback: convert kebab-case back to camelCase
+          if (!Array.from(existingActions).find(method => METHOD_TO_ACTION_KEY_MAP[method] === dirent.name)) {
+            const methodName = dirent.name.replace(/-([a-z])/g, (match, letter) => letter.toUpperCase());
+            existingActions.add(methodName);
+          }
+        }
       }
     }
   } catch (error) {
@@ -629,9 +667,9 @@ async function extractMethods() {
 
 // Create action directory and file with proper error handling
 async function createActionFile(methodInfo, openApiSpec) {
-  const kebabName = methodNameToKebabCase(methodInfo.methodName);
-  const actionDir = path.join(ACTIONS_DIR, `infobip-${kebabName}`);
-  const actionFile = path.join(actionDir, `infobip-${kebabName}.mjs`);
+  const actionKey = METHOD_TO_ACTION_KEY_MAP[methodInfo.methodName] || methodNameToKebabCase(methodInfo.methodName);
+  const actionDir = path.join(ACTIONS_DIR, actionKey);
+  const actionFile = path.join(actionDir, `${actionKey}.mjs`);
 
   try {
     // Validate method info
@@ -669,7 +707,7 @@ async function createActionFile(methodInfo, openApiSpec) {
     console.log(`✅ Created action: ${path.relative(process.cwd(), actionFile)}`);
     return true;
   } catch (error) {
-    console.error(`❌ Failed to create action for ${kebabName}:`, error.message);
+    console.error(`❌ Failed to create action for ${actionKey}:`, error.message);
     return false;
   }
 }
@@ -699,9 +737,9 @@ async function generateActions() {
     console.log(`Found ${methods.length} methods to generate actions for:\n`);
 
     methods.forEach((method) => {
-      const kebabName = methodNameToKebabCase(method.methodName);
+      const actionKey = METHOD_TO_ACTION_KEY_MAP[method.methodName] || methodNameToKebabCase(method.methodName);
       const hasOpenApiMapping = METHOD_TO_OPENAPI_MAP[method.methodName] ? "🔗" : "📝";
-      console.log(`  ${hasOpenApiMapping} ${method.methodName} → infobip-${kebabName}`);
+      console.log(`  ${hasOpenApiMapping} ${method.methodName} → ${actionKey}`);
     });
 
     console.log("\n📝 Generating action files with explicit parameters...\n");
